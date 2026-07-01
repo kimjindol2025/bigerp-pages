@@ -145,8 +145,40 @@
     /* BOARD */
     .board-section { padding: 80px 24px; background: var(--bg); }
     .board-inner { max-width: 780px; margin: 0 auto; }
-    .giscus-wrap { margin-top: 40px; background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 28px; }
-    .giscus { color-scheme: light; }
+
+    /* 글쓰기 폼 */
+    .board-form { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 28px; margin-top: 40px; }
+    .board-form h3 { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .board-form input, .board-form textarea {
+      width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
+      font-size: 0.9rem; font-family: inherit; background: var(--bg); color: var(--ink);
+      transition: border-color .2s; outline: none;
+    }
+    .board-form input:focus, .board-form textarea:focus { border-color: var(--accent); }
+    .board-form textarea { resize: vertical; min-height: 100px; margin-bottom: 12px; }
+    .board-form .submit-btn {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 10px 24px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: background .2s;
+    }
+    .board-form .submit-btn:hover { background: var(--accent-h); }
+    .board-form .submit-btn:disabled { background: var(--mute); cursor: not-allowed; }
+
+    /* 게시물 목록 */
+    .board-list { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
+    .board-empty { text-align: center; color: var(--mute); padding: 40px; font-size: 0.9rem; }
+    .board-item {
+      background: var(--white); border: 1px solid var(--line); border-radius: 12px;
+      padding: 20px 24px; cursor: pointer; transition: border-color .2s;
+    }
+    .board-item:hover { border-color: var(--accent); }
+    .board-item-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .board-item-title { font-weight: 600; font-size: 0.95rem; }
+    .board-item-meta { font-size: 0.8rem; color: var(--mute); white-space: nowrap; }
+    .board-item-body { margin-top: 8px; font-size: 0.85rem; color: var(--sub); line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .board-msg { font-size: 0.85rem; color: var(--green); margin-top: 10px; min-height: 20px; font-weight: 600; }
+    .board-loading { text-align: center; padding: 20px; color: var(--mute); font-size: 0.85rem; }
 
     /* FOOTER */
     footer { border-top: 1px solid var(--line); padding: 40px 24px; }
@@ -417,27 +449,117 @@
   <div class="board-inner">
     <div class="section-label">메모 게시판</div>
     <h2 class="section-title">문의 · 사용 후기 · 건의사항</h2>
-    <p class="section-sub">GitHub 계정으로 댓글을 남길 수 있습니다. 질문, 버그 제보, 기능 제안 환영합니다.</p>
-    <div class="giscus-wrap">
-      <script src="https://giscus.app/client.js"
-        data-repo="kimjindol2025/bigerp-pages"
-        data-repo-id="R_kgDOTGfH0Q"
-        data-category="General"
-        data-category-id="DIC_kwDOTGfH0c4DAR-g"
-        data-mapping="pathname"
-        data-strict="0"
-        data-reactions-enabled="1"
-        data-emit-metadata="0"
-        data-input-position="top"
-        data-theme="light"
-        data-lang="ko"
-        data-loading="lazy"
-        crossorigin="anonymous"
-        async>
-      </script>
+    <p class="section-sub">이름과 내용을 입력해 글을 남겨주세요. 별도 계정 없이 작성 가능합니다.</p>
+
+    <div class="board-form">
+      <h3>새 글 작성</h3>
+      <div class="form-row">
+        <input type="text" id="bd-author" placeholder="이름 (예: 홍길동)" maxlength="30">
+        <input type="text" id="bd-title" placeholder="제목" maxlength="80">
+      </div>
+      <textarea id="bd-content" placeholder="내용을 입력하세요..."></textarea>
+      <div style="display:flex;align-items:center;gap:16px;">
+        <button class="submit-btn" id="bd-submit">등록</button>
+        <span class="board-msg" id="bd-msg"></span>
+      </div>
+    </div>
+
+    <div class="board-list" id="bd-list">
+      <div class="board-loading">불러오는 중...</div>
     </div>
   </div>
 </section>
+
+<script>
+(function() {
+  const API = 'https://memo.dclub.kr/api/posts';
+
+  function timeAgo(iso) {
+    const diff = (Date.now() - new Date(iso)) / 1000;
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return Math.floor(diff/60) + '분 전';
+    if (diff < 86400) return Math.floor(diff/3600) + '시간 전';
+    return Math.floor(diff/86400) + '일 전';
+  }
+
+  function parseAuthor(body) {
+    const m = (body || '').match(/\*\*작성자\*\*: (.+)/);
+    return m ? m[1].trim() : '익명';
+  }
+
+  function parseContent(body) {
+    return (body || '').replace(/\*\*작성자\*\*: .+\n\n/, '').trim();
+  }
+
+  async function loadPosts() {
+    const list = document.getElementById('bd-list');
+    try {
+      const res = await fetch(API);
+      const posts = await res.json();
+      if (!posts.length) {
+        list.innerHTML = '<div class="board-empty">아직 게시물이 없습니다. 첫 글을 남겨보세요!</div>';
+        return;
+      }
+      list.innerHTML = posts.map(p => `
+        <div class="board-item">
+          <div class="board-item-header">
+            <span class="board-item-title">${p.title}</span>
+            <span class="board-item-meta">${parseAuthor(p.body)} · ${timeAgo(p.created_at)}</span>
+          </div>
+          <div class="board-item-body">${parseContent(p.body)}</div>
+        </div>
+      `).join('');
+    } catch(e) {
+      list.innerHTML = '<div class="board-empty">서비스 준비 중입니다. 잠시 후 다시 시도해 주세요.</div>';
+    }
+  }
+
+  document.getElementById('bd-submit').addEventListener('click', async () => {
+    const author = document.getElementById('bd-author').value.trim();
+    const title  = document.getElementById('bd-title').value.trim();
+    const content = document.getElementById('bd-content').value.trim();
+    const msg    = document.getElementById('bd-msg');
+    const btn    = document.getElementById('bd-submit');
+
+    if (!author || !title || !content) {
+      msg.style.color = '#ef4444';
+      msg.textContent = '이름, 제목, 내용을 모두 입력해 주세요.';
+      return;
+    }
+
+    btn.disabled = true;
+    msg.style.color = 'var(--mute)';
+    msg.textContent = '등록 중...';
+
+    try {
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, title, content })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        msg.style.color = 'var(--green)';
+        msg.textContent = '✓ 등록됐습니다!';
+        document.getElementById('bd-author').value = '';
+        document.getElementById('bd-title').value = '';
+        document.getElementById('bd-content').value = '';
+        setTimeout(() => { msg.textContent = ''; loadPosts(); }, 1500);
+      } else {
+        msg.style.color = '#ef4444';
+        msg.textContent = data.message || '오류가 발생했습니다.';
+      }
+    } catch(e) {
+      msg.style.color = '#ef4444';
+      msg.textContent = '서비스에 연결할 수 없습니다.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadPosts();
+})();
+</script>
 
 <!-- CTA -->
 <section class="cta-section" id="install">
